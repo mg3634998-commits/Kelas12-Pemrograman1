@@ -1,6 +1,6 @@
 const PRODUCTS = [
   {id:1,name:'Jaket Menyala',cat:'Fashion',price:1000,old:249000,img:'hoodie',tag:'best seller'},
-  {id:2,name:'Tas Anti Maling "Overthinking"',cat:'Fashion',price:1000,img:'tote'},
+  {id:2,name:'Tas Anti Maling “Overthinking”',cat:'Fashion',price:1000,img:'tote'},
   {id:3,name:'Sepatu Super',cat:'Fashion',price:1000,old:399000,img:'sneakers',tag:'limited'},
   {id:4,name:'Headset Jedag Jedug',cat:'Gadget',price:1000,img:'earbuds',tag:'baru'},
   {id:5,name:'Lampu Cahaya Ilahi',cat:'Gadget',price:1000,old:119000,img:'lamp'},
@@ -13,16 +13,24 @@ const PRODUCTS = [
 const EMOJI = {hoodie:'🧥',tote:'👜',sneakers:'👟',earbuds:'🎧',lamp:'💡',fan:'🌀',stickers:'🏷️',box:'📦',tumbler:'🥤',shades:'🕶️'};
 const CATS = ['Semua','Favorit','Fashion','Gadget','Merch'];
 const FREE_SHIP = 3000; // minimal belanja gratis ongkir (ubah sesuai harga asli)
+const MAX_QTY = 99;
 const rp = n => 'Rp' + n.toLocaleString('id-ID');
 const $ = s => document.querySelector(s);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const store = {
+  get:(k,d)=>{ try{ return JSON.parse(localStorage.getItem(k)) ?? d; }catch(e){ return d; } },
+  set:(k,v)=>{ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} }
+};
+const byId = id => PRODUCTS.find(p => p.id == id);
 
-let state = { cat:'Semua', q:'', cart:{}, wish:new Set(), promo:false };
-try { state.wish = new Set(JSON.parse(localStorage.getItem('jajanin-wish')) || []); } catch(e){}
-try { const s = JSON.parse(localStorage.getItem('jajanin-cart')); if (s) state.cart = s; } catch(e){}
+/* Bersihkan keranjang tersimpan: hanya produk valid dengan jumlah 1–99 */
+const savedCart = store.get('jajanin-cart', {}), cart = {};
+for (const [id,q] of Object.entries(savedCart)) if (byId(id) && Number.isInteger(q) && q > 0) cart[id] = Math.min(q, MAX_QTY);
+const state = { cat:'Semua', q:'', cart, wish:new Set((store.get('jajanin-wish', [])).filter(Number.isInteger)), promo:store.get('jajanin-promo', false) === true };
 
-/* Gambar produk: pakai file di assets/ kalau ada, kalau tidak ada tampil emoji */
+/* Gambar produk: pakai file di assets/ kalau ada, kalau tidak tampil emoji */
 const imgTag = (key, alt, cls='') =>
-  `<img ${cls?`class="${cls}" `:''}src="assets/products/${key}.svg" data-e="${EMOJI[key]||'🛍️'}" alt="${alt}" loading="lazy">`;
+  `<img ${cls?`class="${cls}" `:''}src="assets/products/${key}.svg" data-e="${EMOJI[key]||'🛍️'}" alt="${esc(alt)}" loading="lazy">`;
 document.addEventListener('error', e => {
   const i = e.target;
   if (i.tagName !== 'IMG' || !i.dataset.e || i.dataset.fb) return;
@@ -32,7 +40,7 @@ document.addEventListener('error', e => {
 
 function toast(msg){
   const t = $('#toast'); t.textContent = msg; t.classList.add('show');
-  clearTimeout(toast.t); toast.t = setTimeout(()=>t.classList.remove('show'), 2200);
+  clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove('show'), 2200);
 }
 
 function renderChips(){
@@ -41,41 +49,48 @@ function renderChips(){
 }
 
 function renderGrid(){
+  const q = state.q.trim().toLowerCase();
   const list = PRODUCTS.filter(p =>
     (state.cat==='Semua' || (state.cat==='Favorit' ? state.wish.has(p.id) : p.cat===state.cat)) &&
-    p.name.toLowerCase().includes(state.q.toLowerCase()));
-  $('#empty').hidden = list.length > 0;
-  $('#empty').textContent = state.cat==='Favorit' && !state.wish.size ? 'Belum ada favorit. Tap 🤍 di produk buat nyimpen.' : 'Yah, barangnya belum ada 😭 coba kata kunci lain.';
-  $('#grid').innerHTML = list.map(p => `
-    <article class="card">
+    p.name.toLowerCase().includes(q));
+  const empty = $('#empty');
+  empty.hidden = list.length > 0;
+  empty.textContent = state.cat==='Favorit' && !state.wish.size && !q
+    ? 'Belum ada favorit. Tap 🤍 di produk buat nyimpen.'
+    : 'Yah, barangnya belum ada 😭 coba kata kunci lain.';
+  $('#grid').innerHTML = list.map(p => {
+    const off = p.old ? Math.round((1 - p.price / p.old) * 100) : 0, on = state.wish.has(p.id);
+    return `<article class="card">
       <div class="thumb">
-        ${p.tag ? `<span class="tag">${p.tag}</span>` : ''}
-        <button class="wish" data-wish="${p.id}" aria-label="Simpan ke wishlist">${state.wish.has(p.id)?'💖':'🤍'}</button>
+        ${p.tag ? `<span class="tag">${esc(p.tag)}</span>` : ''}
+        <button class="wish" data-wish="${p.id}" aria-pressed="${on}" aria-label="${on?'Hapus dari':'Simpan ke'} favorit: ${esc(p.name)}">${on?'💖':'🤍'}</button>
         ${imgTag(p.img, p.name)}
       </div>
       <div class="info">
-        <h3>${p.name}</h3>
-        <div class="price">${rp(p.price)}${p.old?`<s>${rp(p.old)}</s>`:''}</div>
-        <button class="btn btn-lime" data-add="${p.id}">+ Keranjang</button>
+        <h3>${esc(p.name)}</h3>
+        <div class="price">${rp(p.price)}${p.old?`<s>${rp(p.old)}</s><em>-${off}%</em>`:''}</div>
+        <button class="btn btn-lime" data-add="${p.id}" aria-label="Tambah ${esc(p.name)} ke keranjang">+ Keranjang</button>
       </div>
-    </article>`).join('');
+    </article>`;
+  }).join('');
 }
 
 function totals(){
-  const sub = Object.entries(state.cart).reduce((s,[id,q]) => s + PRODUCTS.find(p=>p.id==id).price*q, 0);
-  const disc = state.promo ? Math.round(sub*0.15) : 0;
-  return {sub, disc, total: sub-disc};
+  const sub = Object.entries(state.cart).reduce((s,[id,q]) => s + byId(id).price * q, 0);
+  const disc = state.promo ? Math.round(sub * 0.15) : 0;
+  return {sub, disc, total: sub - disc};
 }
 
 function renderCart(){
-  const ids = Object.keys(state.cart).filter(id => PRODUCTS.some(p=>p.id==id));
-  $('#cartCount').textContent = ids.reduce((n,id)=>n+state.cart[id],0);
+  const ids = Object.keys(state.cart);
+  $('#cartCount').textContent = ids.reduce((n,id) => n + state.cart[id], 0);
   $('#cartItems').innerHTML = ids.length ? ids.map(id => {
-    const p = PRODUCTS.find(x=>x.id==id), q = state.cart[id];
+    const p = byId(id), q = state.cart[id];
     return `<div class="item">${imgTag(p.img,'','ico')}
-      <div><b>${p.name}</b><small>${rp(p.price)}</small></div>
-      <div class="qty"><button data-dec="${id}" aria-label="Kurangi">−</button><b>${q}</b><button data-inc="${id}" aria-label="Tambah">+</button></div></div>`;
+      <div><b>${esc(p.name)}</b><small>${rp(p.price)}</small></div>
+      <div class="qty"><button data-dec="${id}" aria-label="Kurangi ${esc(p.name)}">−</button><b>${q}</b><button data-inc="${id}" aria-label="Tambah ${esc(p.name)}">+</button></div></div>`;
   }).join('') : `<div class="cart-empty"><div style="font-size:3rem">🫥</div><p>Keranjangmu masih kosong.<br>Yuk isi dulu!</p></div>`;
+  if (!ids.length) state.promo = false;
   const t = totals();
   $('#subtotal').textContent = rp(t.sub);
   $('#discRow').hidden = !state.promo;
@@ -85,14 +100,14 @@ function renderCart(){
   $('#shipText').textContent = left > 0 ? `Belanja ${rp(left)} lagi, ongkir gratis 🚚` : 'Yey, ongkir kamu gratis! 🚚';
   $('#shipBar').classList.toggle('full', left <= 0);
   $('#shipBar i').style.width = Math.min(100, t.total / FREE_SHIP * 100) + '%';
-  try { localStorage.setItem('jajanin-cart', JSON.stringify(state.cart)); } catch(e){}
+  store.set('jajanin-cart', state.cart); store.set('jajanin-promo', state.promo);
 }
 
 function openCart(open){
-  const was = $('#drawer').classList.contains('open');
-  if (was === open) return;
-  $('#drawer').classList.toggle('open', open);
-  $('#drawer').setAttribute('aria-hidden', !open);
+  const d = $('#drawer');
+  if (d.classList.contains('open') === open) return;
+  d.classList.toggle('open', open);
+  d.inert = !open;
   $('#overlay').hidden = !open;
   document.body.style.overflow = open ? 'hidden' : '';
   (open ? $('#closeCart') : $('#cartBtn')).focus();
@@ -100,19 +115,23 @@ function openCart(open){
 
 document.addEventListener('click', e => {
   const t = e.target.closest('button'); if (!t) return;
-  if (t.dataset.cat) { state.cat = t.dataset.cat; renderChips(); renderGrid(); }
-  if (t.dataset.add) { const id=t.dataset.add; state.cart[id]=(state.cart[id]||0)+1; renderCart(); toast('Masuk keranjang! 🛒'); }
-  if (t.dataset.inc) { state.cart[t.dataset.inc]++; renderCart(); }
-  if (t.dataset.dec) { const id=t.dataset.dec; if(--state.cart[id]<=0) delete state.cart[id]; renderCart(); }
-  if (t.dataset.wish) { const id=+t.dataset.wish; state.wish.has(id)?state.wish.delete(id):state.wish.add(id);
-    try { localStorage.setItem('jajanin-wish', JSON.stringify([...state.wish])); } catch(e){}
-    renderChips(); renderGrid(); }
+  const d = t.dataset;
+  if (d.cat) { state.cat = d.cat; renderChips(); renderGrid(); }
+  if (d.add) { state.cart[d.add] = Math.min(MAX_QTY, (state.cart[d.add]||0) + 1); renderCart(); toast('Masuk keranjang! 🛒'); }
+  if (d.inc) { state.cart[d.inc] = Math.min(MAX_QTY, state.cart[d.inc] + 1); renderCart(); }
+  if (d.dec) { if (--state.cart[d.dec] <= 0) delete state.cart[d.dec]; renderCart(); }
+  if (d.wish) {
+    const id = +d.wish; state.wish.has(id) ? state.wish.delete(id) : state.wish.add(id);
+    store.set('jajanin-wish', [...state.wish]);
+    renderChips(); renderGrid();
+    document.querySelector(`[data-wish="${id}"]`)?.focus();
+  }
 });
 
 $('#search').addEventListener('input', e => { state.q = e.target.value; renderGrid(); });
 $('#cartBtn').onclick = () => openCart(true);
 $('#closeCart').onclick = $('#overlay').onclick = () => openCart(false);
-document.addEventListener('keydown', e => { if (e.key==='Escape') openCart(false); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') openCart(false); });
 
 $('#applyPromo').onclick = () => {
   if ($('#promo').value.trim().toUpperCase() === 'GANIGANTENG') { state.promo = true; toast('Kode GANIGANTENG aktif, diskon 15%! 🎉'); }
@@ -124,36 +143,32 @@ $('#checkout').onclick = () => {
   if (!Object.keys(state.cart).length) return toast('Keranjang masih kosong, isi dulu ya');
   if (!user) { pendingCheckout = true; openCart(false); return openAuth('login'); }
   const {total} = totals();
-  state.cart = {}; state.promo = false; renderCart(); openCart(false);
+  state.cart = {}; state.promo = false; $('#promo').value = ''; renderCart(); openCart(false);
   toast(`Pesanan ${rp(total)} berhasil! Makasih ya 💖`);
 };
 
-/* Efek emoji muncul saat klik */
-const HEARTS = ['💖','✨','🐾','💕'];
+/* Efek emoji muncul saat klik (dilewati kalau pengguna minta animasi dikurangi) */
+const HEARTS = ['💖','✨','🐾','💕'], calm = matchMedia('(prefers-reduced-motion: reduce)');
 document.addEventListener('click', e => {
+  if (calm.matches || !e.clientX && !e.clientY) return;
   const h = document.createElement('span');
   h.className = 'pop-heart';
-  h.textContent = HEARTS[Math.floor(Math.random()*HEARTS.length)];
-  h.style.left = e.clientX + 'px';
-  h.style.top = e.clientY + 'px';
+  h.textContent = HEARTS[Math.floor(Math.random() * HEARTS.length)];
+  h.style.left = e.clientX + 'px'; h.style.top = e.clientY + 'px';
   document.body.appendChild(h);
   setTimeout(() => h.remove(), 800);
 });
 
-/* ===== Login (demo: data tersimpan di browser ini saja) ===== */
-const store = {
-  get:(k,d)=>{ try{ return JSON.parse(localStorage.getItem(k)) ?? d; }catch(e){ return d; } },
-  set:(k,v)=>{ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} }
-};
+/* ===== Login (DEMO: data hanya di browser ini, bukan autentikasi sungguhan) ===== */
 const sha = async (salt, pw) => {
   const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(salt + pw));
   return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2,'0')).join('');
 };
-/* Akun demo bawaan (kata sandi disimpan sebagai hash, bukan teks biasa) */
 const DEMO_USERS = {
-  'admin@gmail.com': { name: 'Admin', salt: 'demo-admin-1', hash: '0c1857723390c5469a445ea7760b66deb11e236b5c65e08a6dbf29f2973c920e' }
+  'admin@gmail.com': { name:'Admin', salt:'demo-admin-1', hash:'0c1857723390c5469a445ea7760b66deb11e236b5c65e08a6dbf29f2973c920e' }
 };
 let user = store.get('jajanin-session', null), tab = 'login', pendingCheckout = false;
+if (user && (typeof user.name !== 'string' || !user.name || typeof user.email !== 'string')) user = null;
 const dlg = $('#authDialog'), first = n => n.split(' ')[0];
 
 function renderAuth(){
@@ -164,6 +179,7 @@ function renderAuth(){
   } else btn.textContent = 'Masuk';
   $('#authForm').hidden = $('#authTabs').hidden = !!user;
   $('#authAccount').hidden = !user;
+  if (user) $('#authAccount').dataset.i = user.name[0].toUpperCase();
   const sub = $('#authSub');
   if (user) { $('#authTitle').textContent = 'Halo, ' + first(user.name) + '!'; sub.textContent = user.email; }
   else {
@@ -237,5 +253,17 @@ function tick(){
   $('#countdown').textContent = `${pad(Math.floor(s/3600))}:${pad(Math.floor(s%3600/60))}:${pad(s%60)}`;
 }
 tick(); setInterval(tick, 1000);
+
+/* Mode terang / gelap */
+const themeBtn = $('#themeBtn'), themeMeta = document.querySelector('meta[name=theme-color]');
+function applyTheme(t, save){
+  document.documentElement.dataset.theme = t;
+  themeBtn.textContent = t === 'dark' ? '☀️' : '🌙';
+  themeBtn.setAttribute('aria-label', t === 'dark' ? 'Ganti ke mode terang' : 'Ganti ke mode gelap');
+  themeMeta.content = t === 'dark' ? '#150d27' : '#241640';
+  if (save) store.set('jajanin-theme', t);
+}
+themeBtn.onclick = () => applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark', true);
+applyTheme(document.documentElement.dataset.theme);
 
 renderChips(); renderGrid(); renderCart();
